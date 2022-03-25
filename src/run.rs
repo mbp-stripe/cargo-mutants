@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use subprocess::{Popen, PopenConfig, Redirection};
+use tracing::info;
 
 use crate::console::CargoActivity;
 use crate::log_file::LogFile;
@@ -57,6 +58,7 @@ pub fn run_cargo(
         .map(Cow::from)
         .unwrap_or(Cow::Borrowed("cargo"));
     log_file.message(&format!("run {} {}", cargo_bin, cargo_args.join(" "),));
+    info!(?cargo_bin, ?cargo_args);
 
     let mut argv: Vec<&str> = vec![&cargo_bin];
     argv.extend(cargo_args.iter());
@@ -77,11 +79,14 @@ pub fn run_cargo(
                 "timeout after {:.3}s, terminating cargo process...\n",
                 start.elapsed().as_secs_f32()
             ));
+            info!("timeout");
             terminate_child(child, log_file)?;
+            info!("terminated child");
             return Ok(CargoResult::Timeout);
         } else if let Err(e) = check_interrupted() {
             activity.interrupted();
             log_file.message("interrupted\n");
+            info!("interrupted");
             terminate_child(child, log_file)?;
             return Err(e);
         } else if let Some(status) = child.wait_timeout(WAIT_POLL_INTERVAL)? {
@@ -94,6 +99,7 @@ pub fn run_cargo(
         exit_status,
         start.elapsed().as_secs_f64()
     ));
+    info!(?exit_status);
     check_interrupted()?;
     if exit_status.success() {
         Ok(CargoResult::Success)
@@ -107,21 +113,25 @@ fn terminate_child(mut child: Popen, log_file: &mut LogFile) -> Result<()> {
     use nix::errno::Errno;
     use nix::sys::signal::{killpg, Signal};
     use std::convert::TryInto;
+    use tracing::error;
 
     let pid = nix::unistd::Pid::from_raw(child.pid().expect("child has a pid").try_into().unwrap());
     if let Err(errno) = killpg(pid, Signal::SIGTERM) {
         if errno == Errno::ESRCH {
             // most likely we raced and it's already gone
+            info!("child already gone?");
             return Ok(());
         } else {
             let message = format!("failed to terminate child: {}", errno);
             log_file.message(&message);
+            error!(%message);
             return Err(anyhow!(message));
         }
     }
     child
         .wait()
         .context("wait for child after terminating pgroup")?;
+    info!("child terminated");
     Ok(())
 }
 

@@ -3,6 +3,7 @@
 //! A `mutants.out` directory holding logs and other output.
 
 use std::fs;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -38,6 +39,11 @@ impl OutputDir {
         let log_dir = path.join("log");
         fs::create_dir(&log_dir).with_context(|| format!("create log directory {:?}", &log_dir))?;
         Ok(OutputDir { path, log_dir })
+    }
+
+    /// Create a trace log in the output directory and register as the global destination.
+    pub fn create_trace_log(&self) -> Result<()> {
+        Ok(())
     }
 
     /// Create a new log for a given scenario.

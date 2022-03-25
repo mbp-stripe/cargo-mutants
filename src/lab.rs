@@ -14,6 +14,8 @@ use path_slash::PathExt;
 use rand::prelude::*;
 use serde::Serialize;
 use tempfile::TempDir;
+use tracing::{info, instrument};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use crate::console::{self, CopyActivity, LabActivity};
 use crate::mutate::Mutation;
@@ -59,6 +61,7 @@ impl Scenario {
 ///
 /// Before testing the mutations, the lab checks that the source tree passes its tests with no
 /// mutations applied.
+#[instrument]
 pub fn test_unmutated_then_all_mutants(
     source_tree: &SourceTree,
     options: &Options,
@@ -66,6 +69,16 @@ pub fn test_unmutated_then_all_mutants(
     let mut options: Options = options.clone();
     let mut lab_outcome = LabOutcome::default();
     let output_dir = OutputDir::new(source_tree.root())?;
+
+    let file_appender = RollingFileAppender::new(Rotation::NEVER, output_dir.path(), "trace.log");
+    let _trace_guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(file_appender)
+            .finish(),
+    );
+    info!("created trace log");
+
+    output_dir.create_trace_log()?;
     let mut lab_activity = LabActivity::new(&options);
 
     if options.build_source {
@@ -155,6 +168,7 @@ pub fn test_unmutated_then_all_mutants(
 /// This runs the given phases in order until one fails.
 ///
 /// Return the outcome of the last phase run.
+#[instrument(skip_all, fields(%scenario))]
 fn run_cargo_phases(
     build_dir: &Path,
     output_dir: &OutputDir,
@@ -208,6 +222,7 @@ fn run_cargo_phases(
 }
 
 fn copy_source_to_scratch(source: &SourceTree, options: &Options) -> Result<TempDir> {
+    info!("copying source tree to scratch");
     let temp_dir = TempDir::new()?;
     let copy_target = options.copy_target;
     let name = if copy_target {
@@ -228,7 +243,10 @@ fn copy_source_to_scratch(source: &SourceTree, options: &Options) -> Result<Temp
         .copy_tree(source.root(), &temp_dir.path())
         .context("copy source tree to lab directory")
     {
-        Ok(stats) => activity.succeed(stats.file_bytes),
+        Ok(stats) => {
+            info!(?stats);
+            activity.succeed(stats.file_bytes);
+        }
         Err(err) => {
             activity.fail();
             eprintln!(
